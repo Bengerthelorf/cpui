@@ -21,10 +21,22 @@ cargo install cpui
 Basic file copy:
 
 ```bash
-cpui source.txt destination.txt
+cpui source_file destination_file
+```
+
+or:
+
+```bash
+cpui source_file destination_dir
 ```
 
 Recursive directory copy:
+
+```bash
+cpui -r source_dir destination_dir_name
+```
+
+or:
 
 ```bash
 cpui -r source_dir destination_dir
@@ -41,7 +53,7 @@ Build from source:
 
 ```bash
 git clone https://github.com/zaneleong/cpui
-cd modern-cp
+cd cpui
 cargo build --release
 ```
 
