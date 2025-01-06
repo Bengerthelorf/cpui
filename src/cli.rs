@@ -20,6 +20,10 @@ pub struct Cli {
     #[arg(long)]
     pub preserve: bool,
 
+    /// Exclude files/directories that match these patterns
+    #[arg(long, value_name = "PATTERN", value_delimiter = ',')]
+    pub exclude: Option<Vec<String>>,
+
     /// Hidden test mode with artificial delay (format: test_mode=<type>:<value>)
     /// Example: test_mode=delay:10
     #[arg(long, hide = true)]
@@ -48,6 +52,14 @@ impl Cli {
             }
         } else {
             TestMode::None
+        }
+    }
+
+    pub fn should_exclude(&self, path: &str) -> bool {
+        if let Some(patterns) = &self.exclude {
+            patterns.iter().any(|pattern| path.contains(pattern))
+        } else {
+            false
         }
     }
 }

@@ -15,7 +15,7 @@ async fn main() -> Result<()> {
     let test_mode = args.get_test_mode();
 
     // Calculate total size
-    let total_size = copy::get_total_size(&args.source, args.recursive).await?;
+    let total_size = copy::get_total_size(&args.source, args.recursive, &args).await?;
     let progress = Arc::new(Mutex::new(CopyProgress::new(total_size)?));
 
     // Set initial file/directory name
@@ -39,13 +39,14 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Start the copy operation
+    // Start the copy operation with exclude patterns
     let result = copy::copy_path(
         &args.source,
         &args.destination,
         args.recursive,
         args.preserve,
         test_mode,
+        &args, // Pass the CLI args to access exclude patterns
         move |n| progress_for_inc.lock().inc_current(n),
         move |name, size| progress_for_file.lock().set_current_file(name, size),
     )

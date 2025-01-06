@@ -1,6 +1,6 @@
 [package]
 name = "cpui"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 authors = ["Zane Leong"]
 description = "A modern replacement for cp command with progress bar and advanced features"

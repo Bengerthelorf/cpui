@@ -1,24 +1,28 @@
-use crate::cli::TestMode;
+use crate::cli::{Cli, TestMode};
 use anyhow::Result;
-// use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::time::{Duration, Instant};
 use tokio::fs::{self, File};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use walkdir::WalkDir;
 
-pub async fn get_total_size(path: &Path, recursive: bool) -> Result<u64> {
+pub async fn get_total_size(path: &Path, recursive: bool, cli: &Cli) -> Result<u64> {
     let mut total_size = 0;
 
     if recursive && path.is_dir() {
         for entry in WalkDir::new(path).min_depth(1) {
             let entry = entry?;
             if entry.path().is_file() {
-                total_size += entry.metadata()?.len();
+                // 检查是否应该排除此文件
+                if !cli.should_exclude(&entry.path().to_string_lossy()) {
+                    total_size += entry.metadata()?.len();
+                }
             }
         }
     } else if path.is_file() {
-        total_size = path.metadata()?.len();
+        if !cli.should_exclude(&path.to_string_lossy()) {
+            total_size = path.metadata()?.len();
+        }
     }
 
     Ok(total_size)
@@ -35,6 +39,7 @@ pub async fn copy_path<F>(
     recursive: bool,
     preserve: bool,
     test_mode: TestMode,
+    cli: &Cli,
     progress_callback: F,
     on_new_file: impl Fn(&str, u64) + Send + Sync + 'static,
 ) -> Result<()>
@@ -45,6 +50,11 @@ where
         callback: progress_callback,
         on_new_file: Box::new(on_new_file),
     };
+
+    // 检查源路径是否应该被排除
+    if cli.should_exclude(&src.to_string_lossy()) {
+        return Ok(());
+    }
 
     if src.is_file() {
         // 如果目标是目录，则将源文件复制到目标目录
@@ -68,7 +78,7 @@ where
         } else {
             dst.to_path_buf()
         };
-        // 创建目标目录
+
         if !new_dst.exists() {
             fs::create_dir_all(&new_dst).await?;
             if preserve {
@@ -105,6 +115,12 @@ where
         for entry in WalkDir::new(src).min_depth(1) {
             let entry = entry?;
             let path = entry.path();
+
+            // 检查是否应该排除此路径
+            if cli.should_exclude(&path.to_string_lossy()) {
+                continue;
+            }
+
             let relative_path = path.strip_prefix(src)?;
             let target_path = new_dst.join(relative_path);
 
