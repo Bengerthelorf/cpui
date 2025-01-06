@@ -151,7 +151,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 👤 Author
 
-Zane Leong (2024)
+Zane Leong (2025)
 
 ## 🌟 Acknowledgments
 
