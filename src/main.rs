@@ -3,9 +3,9 @@ mod copy;
 mod progress;
 
 use anyhow::Result;
+use parking_lot::Mutex;
 use progress::CopyProgress;
 use std::sync::Arc;
-use parking_lot::Mutex;
 use tokio::signal::ctrl_c;
 use tokio::time::Duration;
 
@@ -13,13 +13,14 @@ use tokio::time::Duration;
 async fn main() -> Result<()> {
     let args = cli::parse_args();
     let test_mode = args.get_test_mode();
-    
+
     // Calculate total size
     let total_size = copy::get_total_size(&args.source, args.recursive).await?;
     let progress = Arc::new(Mutex::new(CopyProgress::new(total_size)?));
 
     // Set initial file/directory name
-    let display_name = args.source
+    let display_name = args
+        .source
         .file_name()
         .unwrap_or_default()
         .to_string_lossy();
@@ -43,10 +44,12 @@ async fn main() -> Result<()> {
         &args.source,
         &args.destination,
         args.recursive,
+        args.preserve,
         test_mode,
         move |n| progress_for_inc.lock().inc_current(n),
         move |name, size| progress_for_file.lock().set_current_file(name, size),
-    ).await;
+    )
+    .await;
 
     // 确保在完成或出错时正确清理
     let mut progress = progress.lock();
@@ -55,7 +58,7 @@ async fn main() -> Result<()> {
         return Err(e);
     }
     progress.finish()?;
-    
+
     // 给用户一些时间看到完成状态
     tokio::time::sleep(Duration::from_secs(1)).await;
     Ok(())

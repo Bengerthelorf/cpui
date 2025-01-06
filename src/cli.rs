@@ -16,16 +16,20 @@ pub struct Cli {
     #[arg(short, long)]
     pub recursive: bool,
 
+    /// Preserve file attributes (mode, ownership, timestamps)
+    #[arg(long)]
+    pub preserve: bool,
+
     /// Hidden test mode with artificial delay (format: test_mode=<type>:<value>)
     /// Example: test_mode=delay:10
     #[arg(long, hide = true)]
     pub test_mode: Option<String>,
 }
 
-#[derive(Debug, Clone)] // 添加 Clone trait
+#[derive(Debug, Clone)]
 pub enum TestMode {
-    Delay(u64),          // Milliseconds delay
-    SpeedLimit(u64),     // Bytes per second
+    Delay(u64),      // Milliseconds delay
+    SpeedLimit(u64), // Bytes per second
     None,
 }
 

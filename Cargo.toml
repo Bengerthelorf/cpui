@@ -1,6 +1,6 @@
 [package]
 name = "cpui"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["Zane Leong"]
 description = "A modern replacement for cp command with progress bar and advanced features"
@@ -21,3 +21,4 @@ terminal_size = "0.3.0"
 ratatui = "0.26.1"
 crossterm = "0.27"
 parking_lot = "0.12"
+filetime = "0.2"
