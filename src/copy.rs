@@ -45,28 +45,43 @@ where
     };
 
     if src.is_file() {
-        copy_file(src, dst, test_mode, &callback).await?;
+        // 如果目标是目录，则将源文件复制到目标目录
+        let dst = if dst.is_dir() {
+            dst.join(src.file_name().ok_or_else(|| anyhow::anyhow!("Invalid source file name"))?)
+        } else {
+            dst.to_path_buf()
+        };
+        copy_file(src, &dst, test_mode, &callback).await?;
     } else if recursive && src.is_dir() {
+        // 获取源目录名
+        let src_dir_name = src.file_name()
+            .ok_or_else(|| anyhow::anyhow!("Invalid source directory name"))?;
+        // 构建新的目录路径，保留原目录名
+        let new_dst = if dst.is_dir() {
+            dst.join(src_dir_name)
+        } else {
+            dst.to_path_buf()
+        };
         // 创建目标目录
-        if !dst.exists() {
-            fs::create_dir_all(dst).await?;
+        if !new_dst.exists() {
+            fs::create_dir_all(&new_dst).await?;
         }
-
+    
         // 收集所有需要复制的文件
         let mut files_to_copy = Vec::new();
         for entry in WalkDir::new(src).min_depth(1) {
             let entry = entry?;
             let path = entry.path();
             let relative_path = path.strip_prefix(src)?;
-            let target_path = dst.join(relative_path);
-
+            let target_path = new_dst.join(relative_path);
+    
             if path.is_dir() {
                 fs::create_dir_all(&target_path).await?;
             } else if path.is_file() {
                 files_to_copy.push((path.to_path_buf(), target_path));
             }
         }
-
+    
         // 逐个复制文件
         for (src_path, dst_path) in files_to_copy {
             if let Some(parent) = dst_path.parent() {
@@ -76,8 +91,12 @@ where
             }
             copy_file(&src_path, &dst_path, test_mode.clone(), &callback).await?;
         }
+    } else if src.is_dir() {
+        let src_path = src.display();
+        anyhow::bail!("Source '{}' is a directory. Use -r flag for recursive copy.", src_path);
     } else {
-        anyhow::bail!("Source path is a directory. Use -r flag for recursive copy.");
+        let src_path = src.display();
+        anyhow::bail!("Source '{}' does not exist or is not accessible.", src_path);
     }
 
     Ok(())
