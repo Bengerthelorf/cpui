@@ -2,6 +2,8 @@
 
 A modern, user-friendly command-line file copying tool that goes beyond being just a replacement for the traditional `cp` command. It provides a rich interactive interface and advanced features for efficient file management.
 
+![demo](./img/demo.gif)
+
 ## ✨ Features
 
 🔄 **Real-time Progress Tracking**
