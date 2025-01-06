@@ -20,6 +20,14 @@ pub struct Cli {
     #[arg(long)]
     pub preserve: bool,
 
+    /// Force overwrite destination if exists
+    #[arg(short = 'f', long)]
+    pub force: bool,
+
+    /// Skip confirmation prompt when using force
+    #[arg(short = 'y', long = "yes")]
+    pub yes: bool,
+
     /// Exclude files/directories that match these patterns
     #[arg(long, value_name = "PATTERN", value_delimiter = ',')]
     pub exclude: Option<Vec<String>>,
@@ -61,6 +69,10 @@ impl Cli {
         } else {
             false
         }
+    }
+
+    pub fn should_prompt_for_overwrite(&self) -> bool {
+        self.force && !self.yes
     }
 }
 

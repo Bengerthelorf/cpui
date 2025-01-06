@@ -1,10 +1,65 @@
 use crate::cli::{Cli, TestMode};
-use anyhow::Result;
-use std::path::Path;
+use anyhow::{Result, bail};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tokio::fs::{self, File};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use walkdir::WalkDir;
+
+pub struct FileToOverwrite {
+    pub path: PathBuf,
+    pub is_dir: bool,
+}
+
+pub async fn check_overwrites(src: &Path, dst: &Path, recursive: bool, cli: &Cli) -> Result<Vec<FileToOverwrite>> {
+    let mut files_to_overwrite = Vec::new();
+
+    if src.is_file() {
+        let dst_path = if dst.is_dir() {
+            dst.join(src.file_name().ok_or_else(|| anyhow::anyhow!("Invalid source file name"))?)
+        } else {
+            dst.to_path_buf()
+        };
+
+        if dst_path.exists() && !cli.should_exclude(&dst_path.to_string_lossy()) {
+            files_to_overwrite.push(FileToOverwrite {
+                path: dst_path,
+                is_dir: false,
+            });
+        }
+    } else if recursive && src.is_dir() {
+        let src_name = src.file_name().ok_or_else(|| anyhow::anyhow!("Invalid source directory name"))?;
+        let new_dst = if dst.is_dir() {
+            dst.join(src_name)
+        } else {
+            dst.to_path_buf()
+        };
+
+        // 如果目标目录存在，检查其中会被覆盖的文件
+        if new_dst.exists() {
+            for entry in WalkDir::new(src).min_depth(1) {
+                let entry = entry?;
+                let path = entry.path();
+
+                if cli.should_exclude(&path.to_string_lossy()) {
+                    continue;
+                }
+
+                let relative_path = path.strip_prefix(src)?;
+                let target_path = new_dst.join(relative_path);
+
+                if target_path.exists() {
+                    files_to_overwrite.push(FileToOverwrite {
+                        path: target_path,
+                        is_dir: path.is_dir(),
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(files_to_overwrite)
+}
 
 pub async fn get_total_size(path: &Path, recursive: bool, cli: &Cli) -> Result<u64> {
     let mut total_size = 0;
@@ -13,7 +68,6 @@ pub async fn get_total_size(path: &Path, recursive: bool, cli: &Cli) -> Result<u
         for entry in WalkDir::new(path).min_depth(1) {
             let entry = entry?;
             if entry.path().is_file() {
-                // 检查是否应该排除此文件
                 if !cli.should_exclude(&entry.path().to_string_lossy()) {
                     total_size += entry.metadata()?.len();
                 }
@@ -51,72 +105,46 @@ where
         on_new_file: Box::new(on_new_file),
     };
 
-    // 检查源路径是否应该被排除
     if cli.should_exclude(&src.to_string_lossy()) {
         return Ok(());
     }
 
     if src.is_file() {
-        // 如果目标是目录，则将源文件复制到目标目录
-        let dst = if dst.is_dir() {
-            dst.join(
-                src.file_name()
-                    .ok_or_else(|| anyhow::anyhow!("Invalid source file name"))?,
-            )
+        let dst_path = if dst.is_dir() {
+            dst.join(src.file_name().ok_or_else(|| anyhow::anyhow!("Invalid source file name"))?)
         } else {
             dst.to_path_buf()
         };
-        copy_file(src, &dst, preserve, test_mode, &callback).await?;
+
+        // 对于文件，仅在目标文件存在时检查
+        if dst_path.exists() && !cli.force {
+            bail!("Destination '{}' already exists. Use -f to force overwrite.", dst_path.display());
+        }
+
+        if dst_path.exists() && cli.force {
+            fs::remove_file(&dst_path).await?;
+        }
+
+        copy_file(src, &dst_path, preserve, test_mode, &callback).await?;
     } else if recursive && src.is_dir() {
-        // 获取源目录名
-        let src_dir_name = src
-            .file_name()
-            .ok_or_else(|| anyhow::anyhow!("Invalid source directory name"))?;
-        // 构建新的目录路径，保留原目录名
+        let src_dir_name = src.file_name().ok_or_else(|| anyhow::anyhow!("Invalid source directory name"))?;
         let new_dst = if dst.is_dir() {
             dst.join(src_dir_name)
         } else {
             dst.to_path_buf()
         };
 
+        // 创建目标目录（如果不存在）
         if !new_dst.exists() {
             fs::create_dir_all(&new_dst).await?;
-            if preserve {
-                // 保持目标目录的权限和时间戳
-                let src_metadata = src.metadata()?;
-                let permissions = src_metadata.permissions();
-                tokio::fs::set_permissions(&new_dst, permissions).await?;
-
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::MetadataExt;
-                    let atime = filetime::FileTime::from_unix_time(src_metadata.atime(), 0);
-                    let mtime = filetime::FileTime::from_unix_time(src_metadata.mtime(), 0);
-                    filetime::set_file_times(&new_dst, atime, mtime)?;
-                }
-
-                #[cfg(windows)]
-                {
-                    use std::os::windows::fs::MetadataExt;
-                    if let (Ok(atime), Ok(mtime)) = (
-                        src_metadata.last_access_time().try_into(),
-                        src_metadata.last_write_time().try_into(),
-                    ) {
-                        let atime = filetime::FileTime::from_windows_file_time(atime);
-                        let mtime = filetime::FileTime::from_windows_file_time(mtime);
-                        filetime::set_file_times(&new_dst, atime, mtime)?;
-                    }
-                }
-            }
         }
 
-        // 收集所有需要复制的文件
+        // 收集需要复制的文件和目录
         let mut files_to_copy = Vec::new();
         for entry in WalkDir::new(src).min_depth(1) {
             let entry = entry?;
             let path = entry.path();
 
-            // 检查是否应该排除此路径
             if cli.should_exclude(&path.to_string_lossy()) {
                 continue;
             }
@@ -125,9 +153,10 @@ where
             let target_path = new_dst.join(relative_path);
 
             if path.is_dir() {
-                fs::create_dir_all(&target_path).await?;
+                if !target_path.exists() {
+                    fs::create_dir_all(&target_path).await?;
+                }
                 if preserve {
-                    // 保持目录的权限和时间戳
                     let src_metadata = path.metadata()?;
                     let permissions = src_metadata.permissions();
                     tokio::fs::set_permissions(&target_path, permissions).await?;
@@ -158,24 +187,57 @@ where
             }
         }
 
-        // 逐个复制文件
+        // 复制文件
         for (src_path, dst_path) in files_to_copy {
             if let Some(parent) = dst_path.parent() {
                 if !parent.exists() {
                     fs::create_dir_all(parent).await?;
                 }
             }
+
+            // 检查每个文件是否需要覆盖
+            if dst_path.exists() && !cli.force {
+                bail!("Destination '{}' already exists. Use -f to force overwrite.", dst_path.display());
+            }
+
+            if dst_path.exists() && cli.force {
+                fs::remove_file(&dst_path).await?;
+            }
+
             copy_file(&src_path, &dst_path, preserve, test_mode.clone(), &callback).await?;
         }
+
+        // 设置目标目录的属性（如果需要）
+        if preserve {
+            let src_metadata = src.metadata()?;
+            let permissions = src_metadata.permissions();
+            tokio::fs::set_permissions(&new_dst, permissions).await?;
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                let atime = filetime::FileTime::from_unix_time(src_metadata.atime(), 0);
+                let mtime = filetime::FileTime::from_unix_time(src_metadata.mtime(), 0);
+                filetime::set_file_times(&new_dst, atime, mtime)?;
+            }
+
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::MetadataExt;
+                if let (Ok(atime), Ok(mtime)) = (
+                    src_metadata.last_access_time().try_into(),
+                    src_metadata.last_write_time().try_into(),
+                ) {
+                    let atime = filetime::FileTime::from_windows_file_time(atime);
+                    let mtime = filetime::FileTime::from_windows_file_time(mtime);
+                    filetime::set_file_times(&new_dst, atime, mtime)?;
+                }
+            }
+        }
     } else if src.is_dir() {
-        let src_path = src.display();
-        anyhow::bail!(
-            "Source '{}' is a directory. Use -r flag for recursive copy.",
-            src_path
-        );
+        bail!("Source '{}' is a directory. Use -r flag for recursive copy.", src.display());
     } else {
-        let src_path = src.display();
-        anyhow::bail!("Source '{}' does not exist or is not accessible.", src_path);
+        bail!("Source '{}' does not exist or is not accessible.", src.display());
     }
 
     Ok(())
@@ -198,7 +260,6 @@ where
         .to_string_lossy()
         .to_string();
 
-    // Update current file information
     (callback.on_new_file)(&file_name, file_size);
 
     let mut src_file = File::open(src).await?;
@@ -206,7 +267,6 @@ where
 
     let mut buffer = vec![0; 1024 * 1024]; // 1MB buffer
 
-    // 复制文件内容
     match test_mode {
         TestMode::Delay(ms) => loop {
             let n = src_file.read(&mut buffer).await?;
@@ -229,7 +289,6 @@ where
 
                 dst_file.write_all(&buffer[..n]).await?;
 
-                // 计算应该等待的时间以达到目标速度
                 let elapsed = start_time.elapsed();
                 let target_duration = Duration::from_secs_f64(n as f64 / bps as f64);
                 if elapsed < target_duration {
@@ -250,15 +309,11 @@ where
         },
     }
 
-    // 如果需要保持文件属性
     if preserve {
         let src_metadata = src.metadata()?;
-
-        // 设置文件权限
         let permissions = src_metadata.permissions();
         tokio::fs::set_permissions(dst, permissions).await?;
 
-        // 设置文件修改时间和访问时间
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
